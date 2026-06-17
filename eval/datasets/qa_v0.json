@@ -1,0 +1,20 @@
+[
+  {
+    "id": "q001",
+    "query": "公司主营业务是什么",
+    "type": "fact",
+    "filters": {}
+  },
+  {
+    "id": "q002",
+    "query": "营业收入是多少",
+    "type": "table",
+    "filters": {}
+  },
+  {
+    "id": "q003",
+    "query": "研发投入情况",
+    "type": "fact",
+    "filters": {}
+  }
+]

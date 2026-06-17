@@ -1,0 +1,31 @@
+# 入库与解析管线配置
+parse_version: "v1.0.0"
+
+paths:
+  raw_dir: "docs/report"
+  data_dir: "data"
+  parsed_dir: "data/parsed"
+  chunks_dir: "data/chunks"
+  figures_dir: "data/figures"
+  index_dir: "data/index"
+
+normalize:
+  libreoffice_path: null  # 留空则自动探测；DOC/DOCX 转 PDF 用
+
+parse:
+  engine: "auto"  # auto | docling | pymupdf
+  ocr:
+    enabled: true
+    min_chars_per_page: 50
+  extract_images: true
+  image_min_size: 100  # 宽或高小于此视为装饰性图片
+
+chunk:
+  max_tokens: 512
+  overlap_tokens: 64
+  table_max_rows_per_chunk: 40
+  contextual_prefix: true  # 切片 Embedding 文本前加章节路径
+
+index:
+  rebuild_on_ingest: true
+  batch_embedding_size: 32

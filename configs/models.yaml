@@ -1,0 +1,32 @@
+# 模型与检索配置
+embedding:
+  provider: "sentence_transformers"
+  model_name: "BAAI/bge-small-zh-v1.5"
+  dimension: 512
+  device: "cpu"  # cpu | cuda
+  normalize: true
+
+reranker:
+  enabled: true
+  model_name: "BAAI/bge-reranker-base"
+  top_k_after_rerank: 8
+
+retrieval:
+  vector_top_k: 50
+  bm25_top_k: 50
+  final_top_k: 10
+  alpha_vector: 0.6
+  beta_bm25: 0.4
+  min_score: 0.0
+
+llm:
+  provider: "openai_compatible"  # openai_compatible | ollama
+  base_url: "https://api.openai.com/v1"
+  api_key_env: "OPENAI_API_KEY"
+  model: "gpt-4o-mini"
+  temperature: 0.1
+  max_tokens: 2048
+
+agent:
+  max_steps: 6
+  enable_critic: true
