@@ -1,4 +1,15 @@
-"""LangGraph agent for annual report Q&A."""
+"""
+LangGraph Agent 编排：年报问答。
+
+状态图拓扑：
+  agent → (有 tool_calls?) → tools → agent → ... → critic → END
+
+  - agent：LLM 决策，可调用检索/表查询/计算等工具
+  - tools：执行 ReportTools，收集 citations
+  - critic：轻量校验——检查回答中的数字是否出现在引用片段中
+
+与纯 RAG 的区别：支持多步检索（如先搜章节再查表）、工具链组合。
+"""
 
 from __future__ import annotations
 
@@ -17,9 +28,11 @@ from annual_report_rag.retrieval import HybridSearch
 
 
 class AgentState(TypedDict):
+    """LangGraph 共享状态。"""
+
     messages: Annotated[list[BaseMessage], add_messages]
-    citations: list[dict[str, Any]]
-    steps: list[str]
+    citations: list[dict[str, Any]]  # 检索引用，用于溯源与 critic 校验
+    steps: list[str]  # 推理步骤日志，便于调试
 
 
 SYSTEM_PROMPT = """你是企业年报分析助手。必须遵守：
@@ -30,6 +43,8 @@ SYSTEM_PROMPT = """你是企业年报分析助手。必须遵守：
 
 
 class AnnualReportAgent:
+    """年报 Agent：封装 LangGraph 图与 LLM 配置。"""
+
     def __init__(self, search: HybridSearch | None = None) -> None:
         self.settings = get_settings()
         model_cfg = load_yaml_config("models.yaml")["llm"]
@@ -58,12 +73,13 @@ class AnnualReportAgent:
             self._route_after_agent,
             {"tools": "tools", "critic": "critic" if self.enable_critic else END, END: END},
         )
-        graph.add_edge("tools", "agent")
+        graph.add_edge("tools", "agent")  # 工具结果回到 agent 继续推理
         if self.enable_critic:
             graph.add_edge("critic", END)
         return graph.compile()
 
     def _route_after_agent(self, state: AgentState) -> str:
+        """路由：优先执行工具；无工具调用则进入校验或结束。"""
         last = state["messages"][-1]
         if isinstance(last, AIMessage) and last.tool_calls:
             return "tools"
@@ -86,6 +102,7 @@ class AnnualReportAgent:
             name = call["name"]
             args = call.get("args", {})
             result = self._dispatch_tool(name, args)
+            # 检索类工具自动收集引用，供最终回答溯源
             if name == "search_annual_report":
                 try:
                     hits = json.loads(result)
@@ -112,6 +129,11 @@ class AnnualReportAgent:
         }
 
     def _critic_node(self, state: AgentState) -> dict[str, Any]:
+        """
+        轻量 Critic：检查回答中的数字是否在 citations 中出现。
+
+        完整方案可让第二个 LLM 做引用归因校验，此处为 PoC 规则版。
+        """
         last_ai = next(
             (m for m in reversed(state["messages"]) if isinstance(m, AIMessage) and m.content),
             None,
@@ -135,6 +157,7 @@ class AnnualReportAgent:
         return fn(**args)
 
     def ask(self, question: str) -> dict[str, Any]:
+        """同步问答入口，返回 answer + citations + steps。"""
         state = self.graph.invoke(
             {
                 "messages": [HumanMessage(content=question)],

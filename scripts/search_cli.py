@@ -1,5 +1,11 @@
 #!/usr/bin/env python
-"""命令行检索测试。"""
+"""
+命令行混合检索测试。
+
+示例：
+  python scripts/search_cli.py "营业收入" --top-k 5
+  python scripts/search_cli.py "研发费用" --company-id 600383 --year 2024
+"""
 
 from __future__ import annotations
 

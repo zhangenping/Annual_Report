@@ -1,4 +1,9 @@
-"""DOC/DOCX to PDF normalization."""
+"""
+格式归一化：将多种输入统一为 PDF。
+
+设计原则（见设计文档）：DOC/DOCX 与 PDF 共用下游解析管线，
+避免维护两套切片逻辑。依赖 LibreOffice 无头模式做 Office 转换。
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,7 @@ from pathlib import Path
 
 
 def find_libreoffice() -> str | None:
+    """在 PATH 或 Windows 默认安装路径中查找 LibreOffice。"""
     candidates = [
         "soffice",
         "libreoffice",
@@ -21,6 +27,11 @@ def find_libreoffice() -> str | None:
 
 
 def normalize_to_pdf(source: Path, output_dir: Path, libreoffice_path: str | None = None) -> Path:
+    """
+    输入 PDF 则复制到 output_dir；输入 DOC/DOCX 则转换为 PDF。
+
+    返回归一化后的 PDF 路径，供解析器消费。
+    """
     suffix = source.suffix.lower()
     if suffix == ".pdf":
         target = output_dir / source.name

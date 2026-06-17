@@ -1,5 +1,14 @@
 #!/usr/bin/env python
-"""批量入库：解析 docs/report 下年报并构建索引。"""
+"""
+批量入库 CLI。
+
+用法：
+  python scripts/batch_ingest.py
+  python scripts/batch_ingest.py --input-dir path/to/reports
+  python scripts/batch_ingest.py --skip-index   # 仅解析切片，跳过 Embedding
+
+等价于执行 IngestPipeline.run_full() 的交互式版本。
+"""
 
 from __future__ import annotations
 

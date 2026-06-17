@@ -1,4 +1,14 @@
-"""End-to-end ingestion orchestration."""
+"""
+年报 RAG 入库编排（Ingest Pipeline）。
+
+完整链路：
+  原始文件 → 格式归一化(PDF) → 版面解析 → 分类型切片 → 写入本地存储 → 重建索引
+
+设计要点：
+  - 以 source_hash 去重，同一文件不重复入库
+  - 解析/切片/索引解耦，可单独 rebuild_indexes 而不重跑解析
+  - 元数据（公司、年份）支持手工覆盖，弥补自动抽取不准的情况
+"""
 
 from __future__ import annotations
 
@@ -18,7 +28,10 @@ logger = logging.getLogger(__name__)
 
 
 class IngestPipeline:
+    """端到端入库管线：读配置 → 解析 → 切片 → 登记文档元数据。"""
+
     def __init__(self) -> None:
+        # 从 configs/pipelines.yaml 加载路径、解析器、切片参数
         self.pipeline_cfg = load_yaml_config("pipelines.yaml")
         self.store = LocalStore(self.pipeline_cfg["paths"]["data_dir"])
         paths = self.pipeline_cfg["paths"]
@@ -41,6 +54,7 @@ class IngestPipeline:
 
         doc_id = new_id()
         source_hash = file_sha256(source_path)
+        # 内容哈希去重：相同字节内容的文件直接跳过
         existing = next(
             (r for r in self.store.load_registry() if r.source_hash == source_hash),
             None,
@@ -50,12 +64,14 @@ class IngestPipeline:
             return existing
 
         norm_dir = self.store.root / "normalized" / doc_id
+        # DOC/DOCX 会先转 PDF，保证下游只有一套解析逻辑
         pdf_path = normalize_to_pdf(
             source_path,
             norm_dir,
             libreoffice_path=self.pipeline_cfg.get("normalize", {}).get("libreoffice_path"),
         )
 
+        # auto：已安装 Docling 则优先使用，否则回退 PyMuPDF
         parser = get_parser(self.parse_cfg.get("engine", "auto"))
         figures_dir = self.store.figure_path(doc_id, "_root").parent
         parsed = parser.parse(
@@ -66,6 +82,7 @@ class IngestPipeline:
             doc_id=doc_id,
         )
 
+        # 允许 CLI/API 传入准确元数据，覆盖正则猜测结果
         if company_id:
             parsed.company_id = company_id
         if company_name:
@@ -118,6 +135,7 @@ class IngestPipeline:
         return records
 
     def rebuild_indexes(self) -> dict[str, int]:
+        """全量重建向量库(Chroma)与 BM25 内存索引，解析产物不变。"""
         chunks = self.store.load_all_chunks()
         vector = VectorIndex(self.store)
         bm25 = BM25Index(self.store)

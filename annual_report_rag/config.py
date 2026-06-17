@@ -1,4 +1,9 @@
-"""Application settings and config loaders."""
+"""
+配置加载：环境变量（.env）+ YAML 配置文件（configs/）。
+
+Settings：LLM API 等敏感/环境相关配置
+load_yaml_config：管线参数、模型名称等非敏感配置
+"""
 
 from __future__ import annotations
 
@@ -10,10 +15,13 @@ import yaml
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# annual_report_rag/config.py → 项目根目录
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class Settings(BaseSettings):
+    """从 .env 读取的运行时配置。"""
+
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
@@ -35,6 +43,7 @@ def get_settings() -> Settings:
 
 
 def load_yaml_config(name: str) -> dict[str, Any]:
+    """加载 configs/ 下的 YAML，如 pipelines.yaml、models.yaml。"""
     path = PROJECT_ROOT / "configs" / name
     if not path.exists():
         raise FileNotFoundError(f"Config not found: {path}")
@@ -43,4 +52,5 @@ def load_yaml_config(name: str) -> dict[str, Any]:
 
 
 def resolve_path(relative: str) -> Path:
+    """将配置中的相对路径解析为绝对路径。"""
     return (PROJECT_ROOT / relative).resolve()

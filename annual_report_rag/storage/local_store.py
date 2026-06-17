@@ -1,4 +1,14 @@
-"""Local filesystem storage for documents, chunks, and registry."""
+"""
+本地文件存储层（PoC 版，生产可替换为 PostgreSQL + MinIO）。
+
+目录结构：
+  data/
+    parsed/      ParsedDocument JSON
+    chunks/      每文档一个 Chunk 列表 JSON
+    figures/     提取的图片
+    index/       Chroma + bm25_registry.json
+    documents.json  文档登记册
+"""
 
 from __future__ import annotations
 
@@ -12,6 +22,8 @@ from annual_report_rag.schemas.document import DocumentRecord, ParsedDocument
 
 
 class LocalStore:
+    """文件系统实现的文档与切片持久化。"""
+
     def __init__(self, data_dir: str = "data") -> None:
         self.root = resolve_path(data_dir)
         self.parsed_dir = self.root / "parsed"
@@ -45,6 +57,7 @@ class LocalStore:
         return [Chunk.model_validate(item) for item in data]
 
     def load_all_chunks(self) -> list[Chunk]:
+        """遍历所有文档切片，供全量索引重建。"""
         chunks: list[Chunk] = []
         for path in sorted(self.chunks_dir.glob("*.json")):
             data = json.loads(path.read_text(encoding="utf-8"))

@@ -1,5 +1,9 @@
 #!/usr/bin/env python
-"""仅重建索引（不重新解析）。"""
+"""
+仅重建向量/BM25 索引（不重新解析 PDF）。
+
+适用场景：修改 Embedding 模型、调整检索权重后，基于已有 data/chunks/ 快速重索引。
+"""
 
 from __future__ import annotations
 

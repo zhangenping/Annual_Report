@@ -1,4 +1,14 @@
-"""FastAPI endpoints for search and agent QA."""
+"""
+FastAPI 服务：对外暴露检索与 Agent 问答能力。
+
+端点：
+  GET  /health                  健康检查
+  POST /api/v1/search           混合检索（无需 LLM）
+  POST /api/v1/ask              Agent 问答（需 OPENAI_API_KEY）
+  POST /api/v1/ingest/rebuild-index  重建索引（不重新解析）
+
+单例懒加载 HybridSearch / Agent，避免重复加载 Embedding 模型。
+"""
 
 from __future__ import annotations
 
@@ -53,6 +63,7 @@ def health() -> dict[str, str]:
 
 @app.post("/api/v1/search")
 def search(req: SearchRequest) -> dict[str, Any]:
+    """混合检索接口，返回带 citation 的 Chunk 列表。"""
     filters = SearchFilters(
         company_id=req.filters.get("company_id"),
         fiscal_years=req.filters.get("fiscal_years", []),
@@ -70,6 +81,7 @@ def search(req: SearchRequest) -> dict[str, Any]:
 
 @app.post("/api/v1/ask")
 def ask(req: AskRequest) -> dict[str, Any]:
+    """Agent 问答：多步检索 + 工具调用 + 引用溯源。"""
     try:
         return get_agent().ask(req.question)
     except Exception as exc:
@@ -78,6 +90,7 @@ def ask(req: AskRequest) -> dict[str, Any]:
 
 @app.post("/api/v1/ingest/rebuild-index")
 def rebuild_index() -> dict[str, Any]:
+    """解析完成后单独重建索引，并刷新 API 内存缓存。"""
     pipeline = IngestPipeline()
     stats = pipeline.rebuild_indexes()
     get_search().refresh()

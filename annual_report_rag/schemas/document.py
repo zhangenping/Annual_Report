@@ -1,3 +1,14 @@
+"""
+文档解析阶段的 Pydantic 数据模型。
+
+层级关系：
+  ParsedDocument → PageModel[] → PageElement[]
+                                    ├── TableData（表格结构化）
+                                    └── figure_uri（图片路径）
+
+DocumentRecord：入库登记表，存于 data/documents.json
+"""
+
 from __future__ import annotations
 
 from enum import Enum
@@ -7,6 +18,8 @@ from pydantic import BaseModel, Field
 
 
 class ElementType(str, Enum):
+    """页面元素类型，驱动切片器的分路逻辑。"""
+
     TITLE = "title"
     PARAGRAPH = "paragraph"
     TABLE = "table"
@@ -18,6 +31,12 @@ class ElementType(str, Enum):
 
 
 class TableData(BaseModel):
+    """
+    表格结构化表示（机器可读）。
+
+    与 markdown 字段双写：前者供 Agent 精确查数，后者供检索与展示。
+    """
+
     table_id: str
     caption: Optional[str] = None
     unit: Optional[str] = None
@@ -30,6 +49,8 @@ class TableData(BaseModel):
 
 
 class PageElement(BaseModel):
+    """单页内的一个版面元素。"""
+
     element_id: str
     type: ElementType
     text: str = ""
@@ -43,13 +64,17 @@ class PageElement(BaseModel):
 
 
 class PageModel(BaseModel):
+    """单页及其元素列表。"""
+
     page_no: int
     elements: list[PageElement] = Field(default_factory=list)
-    is_scanned: bool = False
+    is_scanned: bool = False  # 扫描页标记，后续可触发 OCR
     char_count: int = 0
 
 
 class ParsedDocument(BaseModel):
+    """解析管线输出：一份年报的结构化中间表示。"""
+
     doc_id: str
     source_filename: str
     source_hash: str
@@ -67,6 +92,8 @@ class ParsedDocument(BaseModel):
 
 
 class DocumentManifest(BaseModel):
+    """格式归一化阶段的清单（预留，用于记录转换后 PDF 信息）。"""
+
     doc_id: str
     source_filename: str
     source_hash: str
@@ -77,6 +104,8 @@ class DocumentManifest(BaseModel):
 
 
 class DocumentRecord(BaseModel):
+    """文档入库登记条目，写入 data/documents.json。"""
+
     doc_id: str
     company_id: str
     company_name: str

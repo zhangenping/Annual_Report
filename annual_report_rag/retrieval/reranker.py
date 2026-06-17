@@ -1,4 +1,9 @@
-"""Cross-encoder reranker."""
+"""
+Cross-Encoder 精排（Reranker）。
+
+粗召回（向量+BM25）侧重召回率，Reranker 用 query-document 交叉注意力做精排，
+显著提升 Top-K 准确率。模型懒加载并缓存，避免重复初始化。
+"""
 
 from __future__ import annotations
 
@@ -19,6 +24,8 @@ def _get_reranker(model_name: str):
 
 
 class Reranker:
+    """对混合检索候选集做二次排序。"""
+
     def __init__(self) -> None:
         cfg = load_yaml_config("models.yaml")["reranker"]
         self.enabled = cfg.get("enabled", True)
@@ -64,5 +71,6 @@ class Reranker:
                 result.append(enriched)
             return result
         except Exception as exc:
+            # 模型加载失败时降级为混合分排序，保证服务可用
             logger.warning("Rerank failed, fallback to hybrid score: %s", exc)
             return candidates[:top_k]

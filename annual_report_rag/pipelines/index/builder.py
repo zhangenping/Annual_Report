@@ -1,4 +1,14 @@
-"""Build vector and BM25 indexes from chunks."""
+"""
+索引构建：向量库（ChromaDB）+ 关键词库（BM25）。
+
+向量索引：
+  - Embedding 文本使用 Chunk.embedding_text()，含章节路径前缀（Contextual Retrieval）
+  - Chroma payload 存过滤字段（company_id、fiscal_year、chunk_type）
+
+BM25 索引：
+  - jieba 分词 + rank_bm25，弥补向量检索对精确财经术语/数字的不足
+  - 元数据序列化到 data/index/bm25_registry.json，启动时无需重算分词
+"""
 
 from __future__ import annotations
 
@@ -16,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
+    """封装 sentence-transformers，模型名从 configs/models.yaml 读取。"""
+
     def __init__(self) -> None:
         cfg = load_yaml_config("models.yaml")["embedding"]
         from sentence_transformers import SentenceTransformer
@@ -36,6 +48,8 @@ class EmbeddingService:
 
 
 class VectorIndex:
+    """ChromaDB 持久化向量索引，余弦相似度空间。"""
+
     def __init__(self, store: LocalStore) -> None:
         self.store = store
         chroma_path = str(store.index_dir / "chroma")
@@ -50,6 +64,7 @@ class VectorIndex:
         self.embedder = EmbeddingService()
 
     def rebuild(self, chunks: list[Chunk], batch_size: int = 32) -> int:
+        """全量重建：先清空 collection 再批量写入。"""
         existing = self.collection.get()
         if existing and existing.get("ids"):
             self.collection.delete(ids=existing["ids"])
@@ -57,12 +72,12 @@ class VectorIndex:
         if not chunks:
             return 0
 
+        # embedding_text 含章节前缀，提升语义检索准确率
         texts = [c.embedding_text() for c in chunks]
         ids = [c.chunk_id for c in chunks]
         metadatas = [_chunk_payload(c) for c in chunks]
 
         for i in range(0, len(chunks), batch_size):
-            batch_chunks = chunks[i : i + batch_size]
             batch_texts = texts[i : i + batch_size]
             batch_ids = ids[i : i + batch_size]
             batch_meta = metadatas[i : i + batch_size]
@@ -83,6 +98,7 @@ class VectorIndex:
         top_k: int = 50,
         where: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
+        """向量检索；where 为 Chroma 元数据过滤（公司/年份等）。"""
         vector = self.embedder.encode([query_text])[0]
         result = self.collection.query(
             query_embeddings=[vector],
@@ -95,7 +111,7 @@ class VectorIndex:
             return hits
         for idx, chunk_id in enumerate(result["ids"][0]):
             distance = result["distances"][0][idx]
-            score = 1 - distance
+            score = 1 - distance  # 余弦距离转相似度
             hits.append(
                 {
                     "chunk_id": chunk_id,
@@ -108,6 +124,12 @@ class VectorIndex:
 
 
 class BM25Index:
+    """
+    内存 BM25 索引。
+
+    PoC 阶段用 JSON 持久化分词语料映射；生产可换 Elasticsearch/OpenSearch。
+    """
+
     def __init__(self, store: LocalStore) -> None:
         self.store = store
         self.chunk_ids: list[str] = []
@@ -130,6 +152,7 @@ class BM25Index:
         return len(chunks)
 
     def load(self, chunks: list[Chunk] | None = None) -> None:
+        """优先从磁盘恢复；传入 chunks 时强制重建。"""
         import jieba
         from rank_bm25 import BM25Okapi
 
@@ -174,6 +197,7 @@ class BM25Index:
 
 
 def _chunk_payload(chunk: Chunk) -> dict[str, Any]:
+    """Chroma 元数据字段（仅支持 str/int/float，用于 where 过滤）。"""
     m = chunk.metadata
     return {
         "doc_id": chunk.doc_id,

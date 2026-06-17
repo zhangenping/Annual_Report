@@ -1,4 +1,8 @@
-"""Shared utilities."""
+"""
+通用工具函数：哈希、文本清洗、表格转换、切片辅助。
+
+被解析管线、切片器、入库流程共同引用。
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,7 @@ from pathlib import Path
 
 
 def file_sha256(path: Path) -> str:
+    """流式计算文件 SHA256，用于去重与版本溯源。"""
     h = hashlib.sha256()
     with path.open("rb") as f:
         for block in iter(lambda: f.read(1024 * 1024), b""):
@@ -21,17 +26,22 @@ def new_id() -> str:
 
 
 def estimate_tokens(text: str) -> int:
-  # 中文为主时粗略按字符数估算
+    """中文场景下粗略估算 token 数（1 token ≈ 2 字符）。"""
     return max(1, len(text) // 2)
 
 
 def clean_text(text: str) -> str:
+    """合并空白字符，减少 PDF 提取产生的多余换行/空格。"""
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
 def guess_company_from_text(text: str) -> tuple[str | None, str | None, int | None]:
-    """从正文前几页猜测公司名、代码与年份。"""
+    """
+    从正文前 8000 字符正则猜测公司名、股票代码、报告年份。
+
+    准确率有限，入库时建议通过 ingest_file(company_id=...) 手工覆盖。
+    """
     company_name = None
     company_id = None
     fiscal_year = None
@@ -55,6 +65,7 @@ def guess_company_from_text(text: str) -> tuple[str | None, str | None, int | No
 
 
 def table_to_markdown(headers: list[list[str]], rows: list[list[str]]) -> str:
+    """将表格行列转为 Markdown，供检索展示与 LLM 阅读。"""
     if not headers and not rows:
         return ""
     flat_headers = [str(h or "") for h in (headers[-1] if headers else [])]
@@ -72,6 +83,11 @@ def table_to_markdown(headers: list[list[str]], rows: list[list[str]]) -> str:
 
 
 def token_split(text: str, max_tokens: int, overlap_tokens: int) -> list[str]:
+    """
+    固定窗口文本切分（字符近似 token）。
+
+    overlap 保证跨块边界的句子在至少一个块中完整出现。
+    """
     if not text:
         return []
     max_chars = max_tokens * 2

@@ -1,4 +1,17 @@
-"""Type-aware chunking with parent-child support."""
+"""
+分类型语义切片（Chunk Builder）。
+
+切片原则（对应设计文档 01-注意事项）：
+  - 段落( TEXT )：按 token 上限切分，带 overlap；同时保留 Parent 整段供生成回填
+  - 表格( TABLE )：整表为 Parent，超大表按行组切 Child（始终保留表头）
+  - 图表( FIGURE )：以图注+说明文字入库，图片文件路径存 figure_uri
+  - 标题( TITLE )：不单独成块，只更新 section_path 元数据
+  - 页眉页脚：丢弃，避免污染检索
+
+Parent-Child 模式：
+  - Child 小块 → 精准检索（进入向量/BM25 索引）
+  - Parent 大块 → Agent 生成时通过 parent_chunk_id 取回完整上下文
+"""
 
 from __future__ import annotations
 
@@ -8,6 +21,8 @@ from annual_report_rag.utils import estimate_tokens, new_id, token_split
 
 
 class ChunkBuilder:
+    """将 ParsedDocument 转为可索引的 Chunk 列表。"""
+
     def __init__(
         self,
         *,
@@ -23,7 +38,7 @@ class ChunkBuilder:
 
     def build(self, parsed: ParsedDocument) -> list[Chunk]:
         chunks: list[Chunk] = []
-        section_stack: list[str] = []
+        section_stack: list[str] = []  # 随标题元素动态更新
 
         for page in parsed.pages:
             for element in sorted(page.elements, key=lambda e: e.reading_order):
@@ -33,6 +48,7 @@ class ChunkBuilder:
                 if element.type in {ElementType.HEADER, ElementType.FOOTER}:
                     continue
 
+                # 每个元素共享同一套元数据模板
                 base_meta = ChunkMetadata(
                     company_id=parsed.company_id,
                     company_name=parsed.company_name,
@@ -59,6 +75,7 @@ class ChunkBuilder:
         return chunks
 
     def _chunk_text(self, parsed: ParsedDocument, element, base_meta: ChunkMetadata) -> list[Chunk]:
+        """文本切片：先建 Parent，超长时再建多个 Child。"""
         parts = token_split(element.text, self.max_tokens, self.overlap_tokens)
         if not parts:
             return []
@@ -75,6 +92,7 @@ class ChunkBuilder:
         )
         result = [parent]
         if len(parts) == 1:
+            # 未超长时 Parent 即唯一块，不制造冗余 Child
             return result
 
         for part in parts:
@@ -93,6 +111,11 @@ class ChunkBuilder:
         return result
 
     def _chunk_table(self, parsed: ParsedDocument, element, base_meta: ChunkMetadata) -> list[Chunk]:
+        """
+        表格切片：整表为 Parent + table_json 结构化双写。
+
+        超过 table_max_rows 时按行组分块，每块 Child 仍带表头行。
+        """
         table = element.table
         assert table is not None
         parent_id = new_id()
@@ -134,7 +157,7 @@ class ChunkBuilder:
                     table_json={
                         **table_json,
                         "rows": group,
-                        "row_offset": i,
+                        "row_offset": i,  # 标明子块在整表中的起始行
                     },
                     metadata=base_meta,
                     token_count=estimate_tokens(content),
@@ -143,6 +166,7 @@ class ChunkBuilder:
         return chunks
 
     def _chunk_figure(self, parsed: ParsedDocument, element, base_meta: ChunkMetadata) -> Chunk:
+        """图表切片：文本通道用图注描述，原图路径供后续多模态扩展。"""
         caption = element.figure_caption or element.text
         summary = f"【图表】{caption}"
         if element.text and element.text != caption:
@@ -160,6 +184,7 @@ class ChunkBuilder:
 
 
 def _update_sections(stack: list[str], title: str) -> list[str]:
+    """「第X节」级标题重置栈；子标题在栈顶追加，最多 3 层。"""
     if "第" in title and "节" in title[:8]:
         return [title]
     if len(stack) >= 3:

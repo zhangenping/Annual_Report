@@ -1,4 +1,18 @@
-"""PDF layout parsing with Docling (optional) and PyMuPDF fallback."""
+"""
+PDF 版面解析模块。
+
+输出统一结构 ParsedDocument（见 schemas/document.py），供切片器消费。
+
+解析器策略：
+  - PyMuPDFParser：默认回退方案
+      · 文本块：按 fitz 阅读顺序提取，规则识别标题/段落
+      · 表格：pdfplumber 按页抽取，转 Markdown + TableData JSON
+      · 图片：提取嵌入图（过滤 <80px 装饰图），保存到 data/figures/
+  - DoclingParser：可选增强（pip install docling）
+      · IBM Docling 版面理解更强，适合复杂多栏版式
+
+扫描件检测：单页字符数 < 50 标记 is_scanned，后续可接 OCR 管线。
+"""
 
 from __future__ import annotations
 
@@ -27,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 
 class BaseParser(ABC):
+    """解析器抽象接口，便于切换 Docling / PyMuPDF / 商用 API。"""
+
     @abstractmethod
     def parse(
         self,
@@ -41,7 +57,11 @@ class BaseParser(ABC):
 
 
 class PyMuPDFParser(BaseParser):
-    """Fallback parser using PyMuPDF blocks and pdfplumber tables."""
+    """
+    默认 PDF 解析器：PyMuPDF 提文本 + pdfplumber 提表格 + fitz 提图片。
+
+    局限：多栏排版可能出现阅读顺序错乱；复杂合并单元格表格可能结构丢失。
+    """
 
     def parse(
         self,
@@ -69,7 +89,7 @@ class PyMuPDFParser(BaseParser):
             order = 0
 
             for block in blocks:
-                if block.get("type") != 0:
+                if block.get("type") != 0:  # type=0 为文本块，1 为图片块
                     continue
                 lines = []
                 for line in block.get("lines", []):
@@ -81,6 +101,7 @@ class PyMuPDFParser(BaseParser):
 
                 bbox = block.get("bbox")
                 element_type = _classify_text(text)
+                # 标题用于维护章节栈，写入后续切片的 section_path 元数据
                 if element_type == ElementType.TITLE:
                     section_stack = _update_section_stack(section_stack, text)
 
@@ -97,7 +118,7 @@ class PyMuPDFParser(BaseParser):
                 all_text_parts.append(text)
                 order += 1
 
-            # Tables via pdfplumber
+            # pdfplumber 与 fitz 分页独立打开，按 page_index 对齐
             try:
                 import pdfplumber
 
@@ -107,6 +128,7 @@ class PyMuPDFParser(BaseParser):
                         for t_idx, table in enumerate(plumber_page.extract_tables() or []):
                             if not table or len(table) < 2:
                                 continue
+                            # 单元格可能为 None（合并格），统一转空字符串
                             headers = [[str(c or "") for c in table[0]]]
                             rows = [[str(c or "") for c in row] for row in table[1:]]
                             markdown = table_to_markdown(headers, rows)
@@ -131,7 +153,7 @@ class PyMuPDFParser(BaseParser):
             except Exception as exc:
                 logger.warning("Table extraction failed on page %s: %s", page_no, exc)
 
-            # Images
+            # 提取嵌入图片；小图标（Logo 等）跳过，避免污染索引
             if extract_images and figures_dir:
                 figures_dir.mkdir(parents=True, exist_ok=True)
                 for img_idx, img in enumerate(page.get_images(full=True)):
@@ -139,7 +161,7 @@ class PyMuPDFParser(BaseParser):
                         xref = img[0]
                         base = doc.extract_image(xref)
                         if base["width"] < 80 or base["height"] < 80:
-                            continue
+                            continue  # 装饰性小图
                         ext = base.get("ext", "png")
                         fname = f"p{page_no}_img{img_idx}.{ext}"
                         out_path = figures_dir / fname
@@ -164,7 +186,7 @@ class PyMuPDFParser(BaseParser):
                 PageModel(
                     page_no=page_no,
                     elements=page_elements,
-                    is_scanned=char_count < 50,
+                    is_scanned=char_count < 50,  # 无文本层或 OCR 层极少的扫描页
                     char_count=char_count,
                 )
             )
@@ -190,7 +212,11 @@ class PyMuPDFParser(BaseParser):
 
 
 class DoclingParser(BaseParser):
-    """Docling adapter when installed."""
+    """
+    Docling 适配器：利用版面标签（title/table/picture）做元素分类。
+
+    表格通过 export_to_dataframe 拿到行列结构，比纯文本抽取更可靠。
+    """
 
     def parse(
         self,
@@ -305,6 +331,7 @@ class DoclingParser(BaseParser):
 
 
 def get_parser(engine: str = "auto") -> BaseParser:
+    """根据配置或环境选择解析引擎。"""
     if engine == "pymupdf":
         return PyMuPDFParser()
     if engine == "docling":
@@ -319,6 +346,7 @@ def get_parser(engine: str = "auto") -> BaseParser:
 
 
 def _classify_text(text: str) -> ElementType:
+    """基于年报版式规则的轻量标题识别（非 ML 模型）。"""
     if len(text) <= 40 and not text.endswith("。"):
         if any(k in text for k in ("报告", "摘要", "目录", "第一节", "第二节", "第三节", "附注")):
             return ElementType.TITLE
@@ -336,6 +364,7 @@ def re_short_title(text: str) -> bool:
 
 
 def _update_section_stack(stack: list[str], title: str) -> list[str]:
+    """解析阶段维护章节层级，最多保留 4 级。"""
     depth = 1
     if "第" in title and "节" in title:
         depth = 1

@@ -1,4 +1,5 @@
 # 模型与检索配置
+# embedding / reranker / llm / agent 参数；修改后 rebuild-index 或重启 API 生效
 embedding:
   provider: "sentence_transformers"
   model_name: "BAAI/bge-small-zh-v1.5"
